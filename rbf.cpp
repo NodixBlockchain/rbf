@@ -1,90 +1,305 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+
+#define n_rings 128
 
 #define d_rotr(y,x) ((y>>x)|(y<<(32-x)))
 #define d_rotl(y,x) ((y<<x)|(y>>(32-x)))
-#define one_step_rbf(y,x) ((d_rotr(y,KEY[x][1]))^(d_rotl(y,KEY[x][2]))^(y>>KEY[x][3]))
+#define one_step_rbf(y,key) ((d_rotr(y,key->rotr))^(d_rotl(y,key->rotl))^(y>>key->shift))
 
 
-unsigned int tot_rounds[1024];
+struct key_t
+{
+	unsigned int rounds;
+	unsigned int rotr;
+	unsigned int rotl;
+	unsigned int shift;
+};
+
+unsigned int tot_rounds[n_rings+1];
 unsigned int tot_nrounds=0;
 
+struct key_t *keys=NULL;
+unsigned int nkeys=0;
+
+unsigned int compute_ring(unsigned int start_ring, struct key_t *KEY)
+{
+	unsigned int i;
+	unsigned int work;
+
+	work = start_ring;
+
+	for (i = 0; i <= KEY->rounds; i++)
+	{
+		unsigned int result = one_step_rbf(work, KEY);
+
+
+		if (i == KEY->rounds) 
+		{
+			if (result == start_ring)
+			{
+				
+				return work;
+			}
+		}
+		else
+		{
+			work = result;
+		}
+
+		/* printf("work %x \n", work); */
+	}
+
+	return 0;
+}
+
+unsigned int find_ring_cycle(struct key_t *KEY)
+{
+	int goods;
+	unsigned int work;
+	unsigned int start_ring ,nrounds;
+	unsigned int found=0;
+
+	goods=0;
+
+	while(goods<4)
+	{
+		nrounds = 0;
+		start_ring = rand();
+		work = start_ring;
+
+		while(1)
+		{
+			unsigned int result = one_step_rbf(work, KEY);
+		
+			if(result==start_ring)
+			{
+				if(goods>0)
+				{
+					if(KEY->rounds!=nrounds)
+					{
+						return 0;
+					}
+				}
+				goods++;
+				KEY->rounds=nrounds;
+				break;
+			}
+
+			work = result;
+			nrounds++;
+
+			if(nrounds>=256000)
+				return 0;
+
+			/* printf("work %x \n", work); */
+		}
+	}
+
+	if(goods<4)
+		return 0;
+
+	return 1;
+}
+
+
+int find_keys()
+{
+	int r,l,s;
+	
+	FILE *file=fopen("keylst.csv","wb");
+	fprintf(file,"rotr;rotl;shift;rounds\n");
+
+	for(r=1;r<=24;r++){
+		for(l=1;l<=24;l++){
+			for(s=8;s<=31;s++){
+
+				struct key_t KEY;
+				KEY.rotr=r;
+				KEY.rotl=l;
+				KEY.shift=s;
+				
+				if(find_ring_cycle(&KEY))
+				{
+					struct key_t *k = &KEY;
+					unsigned int start=rand();
+					unsigned int result = compute_ring(start, k);
+					unsigned int proof = one_step_rbf(result, k);
+
+					if(proof == start)
+					{
+						fprintf(file,"%.2d;%.2d;%.2d;%d\n",KEY.rotr,KEY.rotl,KEY.shift,KEY.rounds);
+					}
+				}
+			}
+		}
+	}
+	fclose(file);
+	return 1;
+}
+
+
+
+const char* getfield(char* line, int num)
+{
+    const char* tok;
+    for (tok = strtok(line, ";");
+            tok && *tok;
+            tok = strtok(NULL, ";\n"))
+    {
+        if (!--num)
+            return tok;
+    }
+    return NULL;
+}
+
+int load_keys()
+{
+	char line[1024];
+
+	FILE *file=fopen("keylst.csv","rb");
+
+	fgets(line, 1024, file);
+
+    while (fgets(line, 1024, file))
+    {
+		unsigned int result,proof,start,error,i;
+		struct key_t *mykey;
+		char* tmp ;
+
+		if(nkeys==0)
+			keys=(struct key_t *)malloc(sizeof(struct key_t));
+		else
+			keys=(struct key_t *)realloc(keys,(nkeys+1)*sizeof(struct key_t));
+
+		mykey=&keys[nkeys];
+
+        tmp = strdup(line);
+		mykey->rotr = strtol(getfield(tmp,1),NULL,10);
+		free(tmp);
+
+        tmp = strdup(line);
+		mykey->rotl = strtol(getfield(tmp,2),NULL,10);
+		free(tmp);
+
+        tmp = strdup(line);
+		mykey->shift = strtol(getfield(tmp,3),NULL,10);
+		free(tmp);
+
+        tmp = strdup(line);
+		mykey->rounds = strtol(getfield(tmp,4),NULL,10);
+		free(tmp);
+
+
+		error = 0;
+		for(i=0;i<4;i++)
+		{
+			start  = rand();
+			result = compute_ring(start,mykey);
+			proof  = one_step_rbf(result, mykey);
+
+			if(proof != start)
+			{
+				error=1;
+				break;
+			}
+		}
+		
+		if(!error)
+			nkeys++;
+		else
+			printf("error key \n");
+
+    }
+	fclose(file);
+
+	return 1;
+
+}
+
+void create_ring_path(unsigned int *rings, unsigned int n)
+{
+	unsigned int i;
+	for(i=0;i<n;i++)
+	{
+		rings[i]=rand() % nkeys;
+	}
+
+}
 
 int main(int argc,char **argv)
 {
-	unsigned int START=  0x00100000;
+	unsigned int rings_idx[n_rings];
+	/*unsigned int START=  0x00100000;*/
 	/*unsigned int START = 0x00000001;*/
-	/*unsigned int START = 3394426275;*/
-	unsigned int i;
-	int rings;
-	unsigned char KEY[4][4] = { {119,7,9,31},{185,2,3,31},{167,6,5,31},{125,4,11,31} };
-	unsigned int start_ring, work, signature;
+	unsigned int	START = 3391426275;
+	int				rings;
+	unsigned int	i,start_ring, proof;
+
+	srand(time(0));
+
+	/*find_keys();*/
+
+	load_keys();
+
+	create_ring_path(rings_idx,n_rings);
 
 	start_ring = START;
-	work = start_ring;
 
-	tot_rounds[tot_nrounds++] = work;
-	
+	tot_rounds[tot_nrounds++]=start_ring;
+		
 	printf("start num %x \n", START);
 
-	for(rings =0; rings <4; rings++)
+	for(rings =0; rings <n_rings; rings++)
 	{
-		unsigned int rounds = KEY[rings][0];
-		work = start_ring;
-		
-		for (i = 0; i <= rounds; i++)
-		{
-			unsigned int result = one_step_rbf(work, rings);
+		start_ring = compute_ring(start_ring, &keys[rings_idx[rings]] );
 
-			if (i == rounds) 
-			{
-				if (result == start_ring)
-				{
-					printf("ring number %d round %d start %x result %x signature %x \n", rings + 1, i, start_ring, result, work);
-					start_ring = work;
-					tot_rounds[tot_nrounds++] = work;
-				}
-			}
-			else
-			{
-				work = result;
-			}
-		}
+		tot_rounds[tot_nrounds++]=start_ring;
 
-		
+		printf("ring %d signature %x \n",  rings + 1, start_ring);
 	}
-	signature = work;
 
-	for (rings = 3; rings >= 0; rings--)
+	proof = start_ring;
+	
+	for (rings = (n_rings-1); rings >= 0; rings--)
 	{
-		unsigned int result = one_step_rbf(work, rings);
-		printf("sig %d = %x \n", rings, work);
-		if (result == START)
+		struct key_t *k=&keys[rings_idx[rings]];
+
+		printf("sig %d = %x \n", rings, proof);
+
+		proof = one_step_rbf(proof, k);
+		if (proof == START)
 		{
-			printf("proof of work valid %x \n", result);
+			printf("proof of work valid %x \n", proof);
 			break;
 		}
-		work = result;
 	}
 
+	FILE *file=fopen("result.txt","wb");
 
 	for (i = 0; i < tot_nrounds; i++)
 	{
-		printf("%d ", i + 1);
+		fprintf(file,"%d ", i + 1);
 	}
 
-	printf("\n");
+	fprintf(file,"\n");
 	for (i = 0; i < tot_nrounds; i++)
 	{
-		printf("%u ", tot_rounds[i]);
+		fprintf(file,"%u ", tot_rounds[i]);
 	}
 
-	printf("\n");
+	fprintf(file,"\n");
+	fclose(file);
 
+	
 	for (i = 0; i < tot_nrounds; i++)
 	{
 		printf("%x ", tot_rounds[i]);
 	}
-
 	printf("\n");
+	
 
 }
