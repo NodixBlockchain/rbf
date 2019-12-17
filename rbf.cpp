@@ -4,7 +4,7 @@
 #include <time.h>
 
 
-#define n_rings 128
+#define n_rings 1*1024*1024
 
 #define d_rotr(y,x) ((y>>x)|(y<<(32-x)))
 #define d_rotl(y,x) ((y<<x)|(y>>(32-x)))
@@ -18,7 +18,7 @@ struct key_t
 	unsigned int rotl;
 	unsigned int shift;
 };
-
+unsigned int rings_idx[n_rings];
 unsigned int tot_rounds[n_rings+1];
 unsigned int tot_nrounds=0;
 
@@ -36,6 +36,7 @@ unsigned int compute_ring(unsigned int start_ring, struct key_t *KEY,unsigned in
 	{
 		unsigned int result = one_step_rbf(work, KEY);
 
+
 		if((half_ring!=0)&&(half_ring==i))
 			tot_rounds[tot_nrounds++]=result;
 
@@ -44,7 +45,6 @@ unsigned int compute_ring(unsigned int start_ring, struct key_t *KEY,unsigned in
 		{
 			if (result == start_ring)
 			{
-				
 				return work;
 			}
 		}
@@ -133,24 +133,28 @@ int find_keys()
 					unsigned int proof;
 					unsigned int error,i;
 
-					error = 0;
-					for(i=0;i<4;i++)
+
+					if(k->rounds>4)
 					{
-
-						start  = rand();
-						result = compute_ring(start,k,0);
-						proof  = one_step_rbf(result, k);
-
-						if(proof != start)
+						error = 0;
+						for(i=0;i<256;i++)
 						{
-							error=1;
-							break;
-						}
-					}
 
-					if(error == 0)
-					{
-						fprintf(file,"%.2d;%.2d;%.2d;%d\n",KEY.rotr,KEY.rotl,KEY.shift,KEY.rounds);
+							start  = rand();
+							result = compute_ring(start,k,0);
+							proof  = one_step_rbf(result, k);
+
+							if(proof != start)
+							{
+								error=1;
+								break;
+							}
+						}
+
+						if(error == 0)
+						{
+							fprintf(file,"%.2d;%.2d;%.2d;%d\n",KEY.rotr,KEY.rotl,KEY.shift,KEY.rounds);
+						}
 					}
 				}
 			}
@@ -158,21 +162,6 @@ int find_keys()
 	}
 	fclose(file);
 	return 1;
-}
-
-
-
-const char* getfield(char* line, int num)
-{
-    const char* tok;
-    for (tok = strtok(line, ";");
-            tok && *tok;
-            tok = strtok(NULL, ";\n"))
-    {
-        if (!--num)
-            return tok;
-    }
-    return NULL;
 }
 
 int load_keys()
@@ -185,53 +174,33 @@ int load_keys()
 
     while (fgets(line, 1024, file))
     {
-		unsigned int result,proof,start,error,i;
-		struct key_t *mykey;
-		char* tmp ;
+		unsigned int num;
+		const char* tok;
 
 		if(nkeys==0)
 			keys=(struct key_t *)malloc(sizeof(struct key_t));
 		else
 			keys=(struct key_t *)realloc(keys,(nkeys+1)*sizeof(struct key_t));
 
-		mykey=&keys[nkeys];
-
-        tmp = strdup(line);
-		mykey->rotr = strtol(getfield(tmp,1),NULL,10);
-		free(tmp);
-
-        tmp = strdup(line);
-		mykey->rotl = strtol(getfield(tmp,2),NULL,10);
-		free(tmp);
-
-        tmp = strdup(line);
-		mykey->shift = strtol(getfield(tmp,3),NULL,10);
-		free(tmp);
-
-        tmp = strdup(line);
-		mykey->rounds = strtol(getfield(tmp,4),NULL,10);
-		free(tmp);
-
-
-		error = 0;
-		for(i=0;i<4;i++)
+		for (num = 0,tok = strtok(line, ";");tok && *tok; num++,tok = strtok(NULL, ";\n"))
 		{
-			start  = rand();
-			result = compute_ring(start,mykey,0);
-			proof  = one_step_rbf(result, mykey,0);
-
-			if(proof != start)
+			switch(num)
 			{
-				error=1;
+				case 0:
+					keys[nkeys].rotr = strtol(tok,NULL,10);
+				break;
+				case 1:
+					keys[nkeys].rotl = strtol(tok,NULL,10);
+				break;
+				case 2:
+					keys[nkeys].shift = strtol(tok,NULL,10);
+				break;
+				case 3:
+					keys[nkeys].rounds = strtol(tok,NULL,10);
 				break;
 			}
 		}
-		
-		if(!error)
-			nkeys++;
-		else
-			printf("key load error\n");
-
+		nkeys++;
     }
 	fclose(file);
 
@@ -249,48 +218,74 @@ void create_ring_path(unsigned int *rings, unsigned int n)
 
 }
 
+
+
 int main(int argc,char **argv)
 {
-	unsigned int	rings_idx[n_rings];
-	unsigned int	START = rand();
+	unsigned int	START;
 	int				rings;
-	unsigned int	i,start_ring, proof;
+	unsigned int	i,start_ring, proof,n_tests;
+	struct			timeval;
+	time_t			start_time,compute_time,check_time;
 
 	srand(time(0));
 
 	/*find_keys();*/
 
-	load_keys();
+	
 
-	create_ring_path(rings_idx,n_rings);
+	printf("loading rings\n");
 
-	start_ring = START;
+	load_keys			();
+	create_ring_path	(rings_idx,n_rings);
+
+	START		= rand();
+	start_ring  = START;
+	n_tests		= n_rings;
+
+	
 
 	tot_rounds[tot_nrounds++]=start_ring;
 		
-	printf("start num %x \n", START);
+	printf("finding signature for %x with %d rings \n", START,n_rings);
+
+	start_time = time(0);
 
 	for(rings =0; rings <n_rings; rings++)
 	{
-		start_ring = compute_ring(start_ring, &keys[rings_idx[rings]],0 );
+		unsigned int new_ring = compute_ring(start_ring, &keys[rings_idx[rings]],0 );
+
+		if(new_ring == 0)
+		{
+			n_tests = rings;
+			break;
+		}
+		start_ring=new_ring;
 
 		tot_rounds[tot_nrounds++]=start_ring;
 
-		printf("ring %d signature %x \n",  rings + 1, start_ring);
+		/* printf("ring %d signature %x \n",  rings + 1, start_ring); */
 	}
 
 	proof = start_ring;
+	compute_time = time(0);
+
+	printf("work done in %u secs, signature %x \n",compute_time-start_time, proof);
+
+	start_time = time(0);
 	
-	for (rings = (n_rings-1); rings >= 0; rings--)
+	for (rings = (n_tests-1); rings >= 0; rings--)
 	{
-		struct key_t *k=&keys[rings_idx[rings]];
-		printf("sig %d = %x \n", rings, proof);
-		proof = one_step_rbf(proof, k);
+		/*printf("sig %d = %x \n", rings, proof);*/
+		proof = one_step_rbf(proof, ((struct key_t *)(&keys[rings_idx[rings]])));
 	}
+
+	check_time = time(0);
+
 
 	if (proof == START)
 	{
-		printf("proof of work valid %x \n", proof);
+		printf("proof of work valid %x, %u secs \n", proof,check_time-start_time);
 	}
 
 	FILE *file=fopen("result.txt","wb");
@@ -308,11 +303,13 @@ int main(int argc,char **argv)
 	fprintf(file,"\n");
 	fclose(file);
 	
+	/*
 	for (i = 0; i < tot_nrounds; i++)
 	{
 		printf("%x ", tot_rounds[i]);
 	}
 	printf("\n");
+	*/
 
 	getc(stdin);   
 	
