@@ -151,10 +151,8 @@ int find_keys()
 							}
 						}
 
-						if(error == 0)
-						{
-							fprintf(file,"%.2d;%.2d;%.2d;%d\n",KEY.rotr,KEY.rotl,KEY.shift,KEY.rounds);
-						}
+						if(!error)
+							fprintf(file,"%u;%u;%u;%u\n",KEY.rotr,KEY.rotl,KEY.shift,KEY.rounds);
 					}
 				}
 			}
